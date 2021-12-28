@@ -1,6 +1,8 @@
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import floyd_warshall
 from copy import deepcopy
+import itertools
+
 
 ids = ["111111111", "222222222"]
 
@@ -50,13 +52,16 @@ class DroneAgent:
                 return (DELIVER, drone, client_of_package, package)
 
         drone_packages = my_state[DRONES][drone][PACKAGES]
-        if len(drone_packages < 2):
+        if len(drone_packages) < 2:
             nearest_package = self.get_nearest_package(drone, my_state)
             package_location = my_state[PACKAGES][nearest_package][LOCATION]
             package_index = self.convert_tuple_to_index(package_location)
             package_distance = self.dist_matrix[self.convert_tuple_to_index(my_state[DRONES][drone][LOCATION])][package_index]
             if package_distance == 0:
                 return (PICK_UP, drone, nearest_package)
+
+    def get_next_tile_in_path(self, source_index, destination_index):
+        pass  # TODO: implement method
 
 
     def get_nearest_package(self, drone, my_state):
@@ -87,6 +92,9 @@ class DroneAgent:
                 my_state[PACKAGES][package][CLIENTS] = client
 
         return my_state
+
+    def normalize_probabilities(self, client):
+        pass  # TODO: implement method
 
     def create_map_graph(self, problem_map):
         m = len(problem_map)
@@ -119,6 +127,152 @@ class DroneAgent:
                     col.append(left_index)
                     data.append(1)
         return csr_matrix((data, (row, col)), shape=(m * n, m * n))
+
+    def actions(self, my_state):
+        """Returns all the actions that can be executed in the given
+        state. The result should be a tuple (or other iterable) of actions
+        as defined in the problem description file"""
+        drones = my_state[DRONES]
+        atomic_actions = []
+
+        for drone in drones:
+            drone_atomic_actions = self.get_atomic_actions(drone, my_state)
+            atomic_actions.append(drone_atomic_actions)
+        actions = list(filter(self.filter_duplicate_pickups,
+                              itertools.product(*atomic_actions)))
+        return actions
+
+    def filter_duplicate_pickups(self, action):
+        package_actions = []
+        for atomic_action in action:
+            if atomic_action[0] == PICK_UP:
+                package_actions.append(atomic_action[2])
+        return len(package_actions) == len(set(package_actions))
+
+    def get_atomic_actions(self, drone, my_state):
+        """ Get all the possible atomic actions for a specific drone
+        :return: Tuple that contains every possible atomic action for the  drone
+        """
+        drone_object = my_state[DRONES][drone]
+        drone_location = drone_object[LOCATION]
+        drone_packages = drone_object[PACKAGES]
+        drone_data = [drone, drone_location, drone_packages]
+
+        remaining_packages = [package for package in my_state[PACKAGES] if not isinstance(my_state[PACKAGES][package][LOCATION], str)]
+
+        if not drone_packages and not remaining_packages:
+            return [(WAIT, drone)]
+
+        possible_atomic_actions = [(WAIT, drone)] #[]#[(WAIT, drone)]
+        possible_atomic_actions.extend(
+            self.get_deliver_atomic_actions(drone_data, my_state))
+        if not possible_atomic_actions:
+            possible_atomic_actions.extend(self.get_pickup_atomic_actions(
+                drone_data, my_state))
+        if not possible_atomic_actions:
+            possible_atomic_actions.extend(
+                self.get_move_atomic_actions(drone_data))
+
+        # if self.add_wait(my_state, drone) or not possible_atomic_actions:
+        #     possible_atomic_actions.append((WAIT, drone))
+        # if possible_atomic_actions and all(map((lambda atomic_action: atomic_action[0] == PICK_UP), possible_atomic_actions)):
+        #     possible_atomic_actions.append((WAIT, drone))
+
+        return tuple(possible_atomic_actions)
+
+    def get_move_atomic_actions(self, drone_data):
+        """ Get all the possible atomic actions the relate to movement for a
+        specific drone
+        :return: List that contains every possible move atomic action for the
+        drone
+        """
+        drone = drone_data[0]
+        location = drone_data[1]
+        x = location[0]
+        y = location[1]
+
+        move_actions = []
+        map_size_x = len(self.map)
+        # TODO: make sure we reject a problem  with an empty map
+        map_size_y = len(self.map[0])
+
+        if x > 0 and self.map[x - 1][y] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0] - 1, location[1])))
+
+        if x < map_size_x - 1 and self.map[x + 1][y] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0] + 1, location[1])))
+
+        if y > 0 and self.map[x][y - 1] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0], location[1] - 1)))
+
+        if y < map_size_y - 1 and self.map[x][y + 1] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0], location[1] + 1)))
+
+        if x > 0 and y > 0 and self.map[x - 1][y - 1] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0] - 1, location[1] - 1)))
+
+        if x > 0 and y < map_size_y - 1 and self.map[x - 1][y + 1] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0] - 1, location[1] + 1)))
+
+        if x < map_size_x - 1 and y > 0 and self.map[x + 1][y - 1] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0] + 1, location[1] - 1)))
+
+        if x < map_size_x - 1 and y < map_size_y - 1 and self.map[x + 1][y + 1] == PASSABLE:
+            move_actions.append((MOVE, drone, (location[0] + 1, location[1] + 1)))
+
+        return move_actions
+
+    def get_deliver_atomic_actions(self, drone_data, my_state):
+        """ Get all the possible atomic actions that relate to package delivery
+        for a specific drone
+        :return: List that contains every possible package delivery atomic
+        action for the drone
+        """
+        drone, location, drone_packages = drone_data
+        deliver_actions = []
+
+        clients_on_current_location = self.clients_on_current_location(location, my_state)
+
+        for client in clients_on_current_location:
+            package_tuple = my_state[CLIENTS][client][PACKAGES]
+            for package in package_tuple:
+                if package in drone_packages:
+                    deliver_actions.append((DELIVER, drone, client, package))
+        return deliver_actions
+
+    def get_pickup_atomic_actions(self, drone_data, state_dict):
+        """ Get all the possible atomic actions the relate to package pickup
+        for a specific drone
+        :return: List that contains every possible package pickup atomic
+        action for the drone
+        """
+        drone, location, drone_packages = drone_data
+        pickup_actions = []
+
+        if len(drone_packages) < 2:
+            packages_on_current_location = self.packages_on_current_location(location, state_dict)
+            for package in packages_on_current_location:
+                pickup_actions.append((PICK_UP, drone, package))
+        return pickup_actions
+
+    def clients_on_current_location(self, location, my_state):
+        """ Get all the clients that currently in a specific location in the map
+        :return: List of the clients
+        """
+        clients_list = []
+        for client in my_state[CLIENTS]:
+            if my_state[CLIENTS][client][LOCATION] == location:
+                clients_list.append(client)
+
+        return clients_list
+
+    def packages_on_current_location(self, location, state_dict):
+        package_list = []
+        for package in state_dict[PACKAGES]:
+            if state_dict[PACKAGES][package][LOCATION] == location:
+                package_list.append(package)
+
+        return package_list
 
     def create_dist_matrix(self, graph):
         dist_matrix, predecessors = floyd_warshall(csgraph=graph, directed=True, return_predecessors=True, unweighted=False)
