@@ -60,6 +60,12 @@ class DroneAgent:
             if package_distance == 0:
                 return (PICK_UP, drone, nearest_package)
 
+    def greedy_all_drones(self, my_state):
+        all_actions = self.actions(my_state)
+        all_results = [self.result(my_state, action) for action in all_actions]
+
+
+
     def get_next_tile_in_path(self, source_index, destination_index):
         pass  # TODO: implement method
 
@@ -128,6 +134,32 @@ class DroneAgent:
                     data.append(1)
         return csr_matrix((data, (row, col)), shape=(m * n, m * n))
 
+    def result(self, my_state, action):
+        """Return the state that results from executing the given
+        action in the given state. The action must be one of
+        self.actions(state)."""
+
+        new_state = deepcopy(my_state)
+
+        for atomic_action in action:
+            act = atomic_action[0]
+            drone = atomic_action[1]
+            if act == MOVE:
+                new_location = atomic_action[2]
+                new_state[DRONES][drone][LOCATION] = new_location
+            elif act == PICK_UP:
+                package = atomic_action[2]
+                new_state[DRONES][drone][PACKAGES].append(package)
+                new_state[PACKAGES][package][LOCATION] = drone
+            elif act == DELIVER:
+                client = atomic_action[2]
+                package = atomic_action[3]
+                new_state[DRONES][drone][PACKAGES].remove(package)
+                new_state[PACKAGES][package][LOCATION] = DELIVER  # TODO: Check if OK (Maybe just delete the package)
+                new_state[CLIENTS][client][PACKAGES].remove(package)
+
+        return new_state
+
     def actions(self, my_state):
         """Returns all the actions that can be executed in the given
         state. The result should be a tuple (or other iterable) of actions
@@ -138,8 +170,8 @@ class DroneAgent:
         for drone in drones:
             drone_atomic_actions = self.get_atomic_actions(drone, my_state)
             atomic_actions.append(drone_atomic_actions)
-        actions = list(filter(self.filter_duplicate_pickups,
-                              itertools.product(*atomic_actions)))
+        actions = filter(self.filter_duplicate_pickups,
+                         itertools.product(*atomic_actions))
         return actions
 
     def filter_duplicate_pickups(self, action):
