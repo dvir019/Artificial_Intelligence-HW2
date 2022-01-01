@@ -198,7 +198,8 @@ class DroneStochasticProblem:
 def main():
     import pandas as pd
     print(f"IDS: {ids}")
-    for i in range(10):
+    start = time.time()
+    for i in range(1000):
         small_inputs2 = deepcopy(small_inputs)
         for an_input in small_inputs2:
             try:
@@ -212,6 +213,7 @@ def main():
         df_describe1 = pd.DataFrame(d[v])
         print(df_describe1.describe())
         print()
+    print(f"took {time.time() - start} s")
     print()
 
 
