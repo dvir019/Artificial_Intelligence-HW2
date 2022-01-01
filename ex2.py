@@ -35,12 +35,10 @@ class DroneAgent:
 
     def act(self, state):
         my_state = self.convert_state(state)
-        print(f"state: {state}")
-        print(f"new state: {my_state}\n\n\n")
         return self.greedy_act(my_state)
 
     def greedy_act(self, my_state):
-        pass
+        return self.greedy_all_drones(my_state)
 
     def greedy_act_per_drone(self, drone, my_state):
         drone_location = my_state[DRONES][drone][LOCATION]
@@ -61,10 +59,42 @@ class DroneAgent:
                 return (PICK_UP, drone, nearest_package)
 
     def greedy_all_drones(self, my_state):
+        if not my_state[PACKAGES]:
+            return RESET
         all_actions = self.actions(my_state)
-        all_results = [self.result(my_state, action) for action in all_actions]
+        all_results = {action: self.result(my_state, action) for action in all_actions}
+        min_action = min(all_results, key=lambda act: self.objects_distance_sum_h(all_results[act]))
+        # print(my_state[CLIENTS])
+        # print(min_action)
+        # print()
+        # print()
+        return min_action
 
+    def objects_distance_sum_h(self, my_state):
+        packages = my_state[PACKAGES]
+        objects_locations = [packages[package][LOCATION] for package in packages if not isinstance(packages[package][LOCATION], str)]
+        clients = my_state[CLIENTS]
+        sum = 0
+        for client in clients:
+            if clients[client][PACKAGES]:
+                objects_locations.append(my_state[CLIENTS][client][LOCATION])#(self.client_centroids[client])#(client_path[0])
+                # sum += len(client_path) - clients_index  # TODO: improved some.
 
+        objects_locations_indexes = [self.convert_tuple_to_index(loc) for loc in objects_locations]
+
+        drones = my_state[DRONES]
+        for drone in drones:
+            drone_location = drones[drone][LOCATION]
+            drone_location_index = self.convert_tuple_to_index(drone_location)
+            sum += self.distance_sum_from_location(drone_location_index, objects_locations_indexes)
+
+        return sum
+
+    def distance_sum_from_location(self, location_index, locations_list):
+        sum = 0
+        for index in locations_list:
+            sum += self.dist_matrix[location_index][index] #** 0.5  # TODO: Improve number of actions, worse time
+        return sum
 
     def get_next_tile_in_path(self, source_index, destination_index):
         pass  # TODO: implement method
@@ -94,8 +124,13 @@ class DroneAgent:
         clients = state[CLIENTS]
         for client in clients:
             client_packages = list(clients[client][PACKAGES])
+            client_undelivered_packages = []
             for package in client_packages:
-                my_state[PACKAGES][package][CLIENTS] = client
+                if package in packages:
+                    my_state[PACKAGES][package][CLIENTS] = client
+                    client_undelivered_packages.append(package)
+            my_state[CLIENTS][client][PACKAGES] = client_undelivered_packages
+
 
         return my_state
 
@@ -195,7 +230,7 @@ class DroneAgent:
         if not drone_packages and not remaining_packages:
             return [(WAIT, drone)]
 
-        possible_atomic_actions = [(WAIT, drone)] #[]#[(WAIT, drone)]
+        possible_atomic_actions = []#[(WAIT, drone)] #[]#[(WAIT, drone)]
         possible_atomic_actions.extend(
             self.get_deliver_atomic_actions(drone_data, my_state))
         if not possible_atomic_actions:
@@ -209,7 +244,7 @@ class DroneAgent:
         #     possible_atomic_actions.append((WAIT, drone))
         # if possible_atomic_actions and all(map((lambda atomic_action: atomic_action[0] == PICK_UP), possible_atomic_actions)):
         #     possible_atomic_actions.append((WAIT, drone))
-
+        possible_atomic_actions.append((WAIT, drone))
         return tuple(possible_atomic_actions)
 
     def get_move_atomic_actions(self, drone_data):

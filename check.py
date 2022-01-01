@@ -10,6 +10,8 @@ RESET_PENALTY = 15
 DELIVERY_PRICE = 10
 TIME_LIMIT = 5
 
+d = {str(i): [] for i in small_inputs}
+
 
 def initiate_agent(state):
     return DroneAgent(state)
@@ -22,6 +24,7 @@ class EndOfGame(Exception):
 class DroneStochasticProblem:
     def __init__(self, an_input):
         self.state = an_input
+        self.real_initial_state = deepcopy(self.state)
         self.initial_state = deepcopy(self.state)
         start = time.perf_counter()
         self.agent = initiate_agent(self.state)
@@ -186,20 +189,40 @@ class DroneStochasticProblem:
         self.state["turns to go"] -= 1
 
     def terminate_execution(self):
-        print(f"End of game, your score is {self.score}!")
-        print(f"-----------------------------------")
+        # print(f"End of game, your score is {self.score}!")
+        # print(f"-----------------------------------")
+        d[str(self.real_initial_state)].append(self.score)
         raise EndOfGame
 
 
 def main():
+    import pandas as pd
     print(f"IDS: {ids}")
-    for an_input in small_inputs:
-        try:
-            my_problem = DroneStochasticProblem(an_input)
-            my_problem.run_round()
-        except EndOfGame:
-            continue
+    for i in range(10):
+        small_inputs2 = deepcopy(small_inputs)
+        for an_input in small_inputs2:
+            try:
+                my_problem = DroneStochasticProblem(an_input)
+                my_problem.run_round()
+            except EndOfGame:
+                continue
+    for v in d: print(d[v])
+    print()
+    for v in d:
+        df_describe1 = pd.DataFrame(d[v])
+        print(df_describe1.describe())
+        print()
+    print()
+
 
 
 if __name__ == '__main__':
     main()
+    # a = [25, 35, 35, 30, 40, 35, 35, 35, 35, 30, 45, 45, 35, 40, 35, 45, 35, 40, 50, 45, 40, 40, 25, 35, 30, 35, 30, 40, 25, 35, 25, 30, 25, 25, 40, 40, 45, 55, 40, 50, 35, 25, 25, 30, 30, 50, 35, 45, 45, 50, 35, 45, 30, 45, 45, 45, 35, 25, 35, 40, 35, 40, 25, 45, 30, 35, 15, 35, 30, 35, 40, 35, 25, 30, 30, 50, 30, 40, 35, 35, 40, 40, 40, 35, 40, 45, 40, 50, 30, 45, 30, 40, 30, 40, 20, 35, 45, 40, 50, 35]
+    # b = [5, 5, 5, 10, 15, 10, 10, 15, 15, 10, 20, 10, 10, 25, 15, 5, 10, 15, 20, 10, 10, 20, 20, 10, 15, 15, 15, 15, 15, 10, 10, 15, 15, 15, 10, 10, 10, 20, 15, 25, 10, 10, 10, 10, 5, 10, 15, 15, 5, 10, 10, 15, 25, 10, 5, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 5, 15, 15, 10, 15, 5, 20, 25, 10, 15, 10, 20, 15, 15, 10, 10, 15, 25, 15, 5, 10, 5, 5, 10, 25, 5, 5, 20, 15, 20, 15, 5, 10]
+    # import pandas as pd
+    # df_describe1 = pd.DataFrame(a)
+    # print(df_describe1.describe())
+    # df_describe2 = pd.DataFrame(b)
+    # print(df_describe2.describe())
+    # print()
