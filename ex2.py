@@ -3,7 +3,6 @@ from scipy.sparse.csgraph import floyd_warshall
 from copy import deepcopy
 import itertools
 
-
 ids = ["111111111", "222222222"]
 
 # Objects
@@ -13,6 +12,7 @@ LOCATION = "location"
 CLIENTS = "clients"
 MAP = "map"
 PATH = "path"
+TURNS = "turns to go"
 
 # Actions
 MOVE = "move"
@@ -32,6 +32,9 @@ class DroneAgent:
         self.map = initial[MAP]
         graph = self.create_map_graph(self.map)
         self.dist_matrix = self.create_dist_matrix(graph)
+        self.points_collected = 0
+        self.rounds_played = 0
+        self.rounds_left = initial[TURNS]
 
     def act(self, state):
         my_state = self.convert_state(state)
@@ -39,15 +42,118 @@ class DroneAgent:
 
     def greedy_act(self, my_state):
         # return self.greedy_all_drones(my_state)
-        if not my_state[PACKAGES]:
-            return RESET
         zero_packages_drone_actions = self.send_zero_packages_drones(my_state)
         taken_drones = set(act[1] for act in zero_packages_drone_actions)
         actions = set(zero_packages_drone_actions)
         for drone in my_state[DRONES]:
             if drone not in taken_drones:
                 actions.add(self.greedy_act_per_drone(drone, my_state))
+
+        for action in actions:
+            if action[0] == DELIVER:
+                self.update_problem_variables(actions)
+                return actions
+        if self.is_reset_recommended(my_state):
+            actions = RESET
+
+        self.update_problem_variables(actions)
         return actions
+
+    def update_problem_variables(self, actions):
+        self.rounds_left -= 1
+        self.rounds_played += 1
+        if actions == RESET:
+            self.points_collected -= 15
+        else:
+            for action in actions:
+                if action[0] == DELIVER:
+                    self.points_collected += 10
+
+    def get_points_per_round_played(self):
+        return self.points_collected / (self.rounds_played + 1)
+
+    def get_points_per_round_left(self, my_state):
+        if not my_state[PACKAGES]:
+            return 0
+        points_accumulated = 0
+        max_distance = 0
+        packages = my_state[PACKAGES]
+        unpicked_packages = list(
+            filter(lambda p: isinstance(packages[p][LOCATION], tuple), packages.keys()))
+        drones = my_state[DRONES]
+        drones_without_packages = list(
+            filter(lambda d: len(drones[d][PACKAGES]) == 0, drones.keys()))
+        drones_index = {drone: self.convert_tuple_to_index(drones[drone][LOCATION]) for drone in
+                        drones_without_packages}
+        packages_index = {package: self.convert_tuple_to_index(packages[package][LOCATION]) for
+                          package in unpicked_packages}
+        drone_package_distance = {}
+        for drone, package in itertools.product(drones_without_packages, unpicked_packages):
+            package_index = packages_index[package]
+            drone_index = drones_index[drone]
+            drone_package_distance[(drone, package)] = self.dist_matrix[drone_index][package_index]
+        left_packages = set(unpicked_packages)
+        left_drones = set(drones_without_packages)
+        drone_package_sorted = sorted(drone_package_distance,
+                                      key=lambda d_p: drone_package_distance[d_p])
+        for drone, package in drone_package_sorted:
+            if drone in left_drones and package in left_packages:
+                package_index = packages_index[package]
+                drone_index = drones_index[drone]
+                package_distance = self.dist_matrix[drone_index][package_index]
+                client = my_state[PACKAGES][package][CLIENTS]
+                client_indexx = self.convert_tuple_to_index(my_state[CLIENTS][client][LOCATION])
+                distance_from_client = self.dist_matrix[package_index][client_indexx]
+                total_distance = package_distance + distance_from_client
+                if total_distance < self.rounds_left:
+                    max_distance = max(max_distance, total_distance)
+                    points_accumulated += 10
+        for drone in my_state[DRONES]:
+            drone_location = my_state[DRONES][drone][LOCATION]
+            drone_index = self.convert_tuple_to_index(drone_location)
+            drone_packages = my_state[DRONES][drone][PACKAGES]
+
+            if len(drone_packages) == 1:
+                package = drone_packages[0]
+                client_of_package = my_state[PACKAGES][package][CLIENTS]
+                client_location = my_state[CLIENTS][client_of_package][
+                    LOCATION]  # TODO: Add (maybe) probabilities here!
+                client_index = self.convert_tuple_to_index(client_location)
+                client_distance = self.dist_matrix[drone_index][client_index]
+                if client_distance < self.rounds_left:
+                    max_distance = max(max_distance, client_distance)
+                    points_accumulated += 10
+
+            if len(drone_packages) == 2:
+                package1 = drone_packages[0]
+                client1 = my_state[PACKAGES][package1][CLIENTS]
+                client1_location = my_state[CLIENTS][client1][LOCATION]
+                client1_index = self.convert_tuple_to_index(client1_location)
+                client1_distance = self.dist_matrix[drone_index][client1_index]
+
+                package2 = drone_packages[1]
+                client2 = my_state[PACKAGES][package2][CLIENTS]
+                client2_location = my_state[CLIENTS][client2][LOCATION]
+                client2_index = self.convert_tuple_to_index(client2_location)
+                client2_distance = self.dist_matrix[drone_index][client2_index]
+
+                closest_client = min(client1_distance, client2_distance)
+                if closest_client < self.rounds_left:
+                    max_distance = max(max_distance, closest_client)
+                    points_accumulated += 10
+
+        if max_distance == 0:
+            return 500
+        return points_accumulated / max_distance
+
+    def is_reset_recommended(self, my_state):
+        rounds_left = self.rounds_left
+        points_per_rounds_played = self.get_points_per_round_played()
+        points_per_round_left = self.get_points_per_round_left(my_state)
+        if (self.rounds_left * self.get_points_per_round_played() - 15 >
+                 self.rounds_left * self.get_points_per_round_left(my_state)):
+            return True
+        return False
 
     def greedy_act_per_drone(self, drone, my_state):
         drone_location = my_state[DRONES][drone][LOCATION]
@@ -63,7 +169,8 @@ class DroneAgent:
         if len(drone_packages) == 1:
             package = drone_packages[0]
             client_of_package = my_state[PACKAGES][package][CLIENTS]
-            client_location = my_state[CLIENTS][client_of_package][LOCATION]  # TODO: Add (maybe) probabilities here!
+            client_location = my_state[CLIENTS][client_of_package][
+                LOCATION]  # TODO: Add (maybe) probabilities here!
             client_index = self.convert_tuple_to_index(client_location)
             best_move = self.get_next_tile_in_path(drone, client_index, my_state)
             return (MOVE, drone, best_move)
@@ -86,8 +193,6 @@ class DroneAgent:
                 best_move = self.get_next_tile_in_path(drone, client2_index, my_state)
             return (MOVE, drone, best_move)
 
-
-
     def greedy_all_drones(self, my_state):
         if not my_state[PACKAGES]:
             return RESET
@@ -102,12 +207,14 @@ class DroneAgent:
 
     def objects_distance_sum_h(self, my_state):
         packages = my_state[PACKAGES]
-        objects_locations = [packages[package][LOCATION] for package in packages if not isinstance(packages[package][LOCATION], str)]
+        objects_locations = [packages[package][LOCATION] for package in packages if
+                             not isinstance(packages[package][LOCATION], str)]
         clients = my_state[CLIENTS]
         sum = 0
         for client in clients:
             if clients[client][PACKAGES]:
-                objects_locations.append(my_state[CLIENTS][client][LOCATION])#(self.client_centroids[client])#(client_path[0])
+                objects_locations.append(my_state[CLIENTS][client][
+                                             LOCATION])  # (self.client_centroids[client])#(client_path[0])
                 # sum += len(client_path) - clients_index  # TODO: improved some.
 
         objects_locations_indexes = [self.convert_tuple_to_index(loc) for loc in objects_locations]
@@ -123,7 +230,8 @@ class DroneAgent:
     def distance_sum_from_location(self, location_index, locations_list):
         sum = 0
         for index in locations_list:
-            sum += self.dist_matrix[location_index][index] #** 0.5  # TODO: Improve number of actions, worse time
+            sum += self.dist_matrix[location_index][
+                index]  # ** 0.5  # TODO: Improve number of actions, worse time
         return sum
 
     def get_next_tile_in_path(self, drone, destination_index, my_state):
@@ -132,18 +240,24 @@ class DroneAgent:
         drone_location = drone_object[LOCATION]
         drone_packages = drone_object[PACKAGES]
         drone_data = [drone, drone_location, drone_packages]
-        move_actions = self.get_move_atomic_actions(drone_data)  # TODO: maybe include staying in the same place
-        best_move = min(move_actions, key=lambda act: self.dist_matrix[self.convert_tuple_to_index(act[2])][destination_index])
+        move_actions = self.get_move_atomic_actions(
+            drone_data)  # TODO: maybe include staying in the same place
+        best_move = min(move_actions,
+                        key=lambda act: self.dist_matrix[self.convert_tuple_to_index(act[2])][
+                            destination_index])
         return best_move[2]
-
 
     def send_zero_packages_drones(self, my_state):
         packages = my_state[PACKAGES]
-        unpicked_packages = list(filter(lambda p: isinstance(packages[p][LOCATION], tuple), packages.keys()))
+        unpicked_packages = list(
+            filter(lambda p: isinstance(packages[p][LOCATION], tuple), packages.keys()))
         drones = my_state[DRONES]
-        drones_without_packages = list(filter(lambda d: len(drones[d][PACKAGES]) == 0, drones.keys()))
-        drones_index = {drone: self.convert_tuple_to_index(drones[drone][LOCATION]) for drone in drones_without_packages}
-        packages_index = {package: self.convert_tuple_to_index(packages[package][LOCATION]) for package in unpicked_packages}
+        drones_without_packages = list(
+            filter(lambda d: len(drones[d][PACKAGES]) == 0, drones.keys()))
+        drones_index = {drone: self.convert_tuple_to_index(drones[drone][LOCATION]) for drone in
+                        drones_without_packages}
+        packages_index = {package: self.convert_tuple_to_index(packages[package][LOCATION]) for
+                          package in unpicked_packages}
         drone_package_distance = {}
         for drone, package in itertools.product(drones_without_packages, unpicked_packages):
             package_index = packages_index[package]
@@ -151,7 +265,8 @@ class DroneAgent:
             drone_package_distance[(drone, package)] = self.dist_matrix[drone_index][package_index]
         left_packages = set(unpicked_packages)
         left_drones = set(drones_without_packages)
-        drone_package_sorted = sorted(drone_package_distance, key=lambda d_p: drone_package_distance[d_p])
+        drone_package_sorted = sorted(drone_package_distance,
+                                      key=lambda d_p: drone_package_distance[d_p])
         actions = []
         for drone, package in drone_package_sorted:
             if drone in left_drones and package in left_packages:
@@ -160,7 +275,8 @@ class DroneAgent:
                 else:
                     package_index = packages_index[package]
                     drone_index = drones_index[drone]
-                    best_move = self.get_next_tile_in_path(drone, package_index, my_state)  # TODO: implement this method to return tuple(!!)
+                    best_move = self.get_next_tile_in_path(drone, package_index,
+                                                           my_state)  # TODO: implement this method to return tuple(!!)
                     actions.append((MOVE, drone, best_move))
                 left_drones.remove(drone)
                 left_packages.remove(package)
@@ -175,10 +291,15 @@ class DroneAgent:
 
     def get_nearest_package(self, drone, my_state):
         packages = my_state[PACKAGES]
-        unpicked_packages = filter(lambda p: isinstance(packages[p][LOCATION], tuple), packages.keys())
-        packages_with_index = {package: self.convert_tuple_to_index(my_state[PACKAGES][package][LOCATION]) for package in unpicked_packages}
+        unpicked_packages = filter(lambda p: isinstance(packages[p][LOCATION], tuple),
+                                   packages.keys())
+        packages_with_index = {
+            package: self.convert_tuple_to_index(my_state[PACKAGES][package][LOCATION]) for package
+            in
+            unpicked_packages}
         drone_index = self.convert_tuple_to_index(my_state[DRONES][drone][LOCATION])
-        nearest_package = min(packages_with_index, key=lambda p: self.dist_matrix[drone_index][packages_with_index[p]])
+        nearest_package = min(packages_with_index,
+                              key=lambda p: self.dist_matrix[drone_index][packages_with_index[p]])
         return nearest_package
 
     def convert_state(self, state):
@@ -203,7 +324,6 @@ class DroneAgent:
                     my_state[PACKAGES][package][CLIENTS] = client
                     client_undelivered_packages.append(package)
             my_state[CLIENTS][client][PACKAGES] = client_undelivered_packages
-
 
         return my_state
 
@@ -263,7 +383,8 @@ class DroneAgent:
                 client = atomic_action[2]
                 package = atomic_action[3]
                 new_state[DRONES][drone][PACKAGES].remove(package)
-                new_state[PACKAGES][package][LOCATION] = DELIVER  # TODO: Check if OK (Maybe just delete the package)
+                new_state[PACKAGES][package][
+                    LOCATION] = DELIVER  # TODO: Check if OK (Maybe just delete the package)
                 new_state[CLIENTS][client][PACKAGES].remove(package)
 
         return new_state
@@ -298,12 +419,13 @@ class DroneAgent:
         drone_packages = drone_object[PACKAGES]
         drone_data = [drone, drone_location, drone_packages]
 
-        remaining_packages = [package for package in my_state[PACKAGES] if not isinstance(my_state[PACKAGES][package][LOCATION], str)]
+        remaining_packages = [package for package in my_state[PACKAGES] if
+                              not isinstance(my_state[PACKAGES][package][LOCATION], str)]
 
         if not drone_packages and not remaining_packages:
             return [(WAIT, drone)]
 
-        possible_atomic_actions = []#[(WAIT, drone)] #[]#[(WAIT, drone)]
+        possible_atomic_actions = []  # [(WAIT, drone)] #[]#[(WAIT, drone)]
         possible_atomic_actions.extend(
             self.get_deliver_atomic_actions(drone_data, my_state))
         if not possible_atomic_actions:
@@ -415,7 +537,8 @@ class DroneAgent:
         return package_list
 
     def create_dist_matrix(self, graph):
-        dist_matrix, predecessors = floyd_warshall(csgraph=graph, directed=True, return_predecessors=True, unweighted=False)
+        dist_matrix, predecessors = floyd_warshall(csgraph=graph, directed=True,
+                                                   return_predecessors=True, unweighted=False)
         return dist_matrix
 
     def convert_index_to_tuple(self, index, m, n):

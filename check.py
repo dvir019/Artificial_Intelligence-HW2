@@ -35,6 +35,9 @@ class DroneStochasticProblem:
         self.score = 0
 
     def run_round(self):
+        # from drones_sim_ploter_empty import Plotter
+        # plotter = Plotter(self.initial_state)
+        # plotter.do_your_thing(self.initial_state)
         while self.state["turns to go"]:
             start = time.perf_counter()
             action = self.agent.act(self.state)
@@ -46,6 +49,7 @@ class DroneStochasticProblem:
                 logging.critical(f"You returned an illegal action!")
                 raise RuntimeError
             self.result(action)
+            # plotter.do_your_thing(self.state)
         self.terminate_execution()
 
     def is_action_legal(self, action):
