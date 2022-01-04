@@ -2,7 +2,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import floyd_warshall
 from copy import deepcopy
 import itertools
-
+import random
 ids = ["111111111", "222222222"]
 
 # Objects
@@ -144,16 +144,32 @@ class DroneAgent:
 
         if max_distance == 0:
             return 500
-        return points_accumulated / max_distance
+        return points_accumulated / (max_distance)
 
     def is_reset_recommended(self, my_state):
         rounds_left = self.rounds_left
         points_per_rounds_played = self.get_points_per_round_played()
         points_per_round_left = self.get_points_per_round_left(my_state)
-        if (self.rounds_left * self.get_points_per_round_played() - 15 >
+        if (self.rounds_left * self.get_points_per_round_played() - 5 >
                  self.rounds_left * self.get_points_per_round_left(my_state)):
             return True
         return False
+
+    def client_next_location(self, client, my_state):
+        movements = [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)]
+        properties = my_state[CLIENTS][client]
+        for _ in range(1000):
+            movement = random.choices(movements, weights=properties["probabilities"])[0]
+            new_coordinates = (
+            properties["location"][0] + movement[0], properties["location"][1] + movement[1])
+            if new_coordinates[0] < 0 or new_coordinates[1] < 0 or new_coordinates[0] >= len(
+                    my_state["map"]) or \
+                    new_coordinates[1] >= len(my_state["map"][0]):
+                continue
+            break
+        else:
+            new_coordinates = (properties["location"][0], properties["location"][1])
+        return new_coordinates
 
     def greedy_act_per_drone(self, drone, my_state):
         drone_location = my_state[DRONES][drone][LOCATION]
@@ -166,30 +182,47 @@ class DroneAgent:
                 return (DELIVER, drone, client_of_package, package)
 
         drone_packages = my_state[DRONES][drone][PACKAGES]
+
+        for package in my_state[PACKAGES]:
+            if my_state[PACKAGES][package][LOCATION] == my_state[DRONES][drone][LOCATION] and len(
+                    drone_packages) < 2:  # TODO: Check that package has not been taken yet by other drone
+
+                    return (PICK_UP, drone, package)
+
         if len(drone_packages) == 1:
             package = drone_packages[0]
             client_of_package = my_state[PACKAGES][package][CLIENTS]
             client_location = my_state[CLIENTS][client_of_package][
                 LOCATION]  # TODO: Add (maybe) probabilities here!
+            client_location = self.client_next_location(client_of_package, my_state)
             client_index = self.convert_tuple_to_index(client_location)
+            if client_location == drone_location:
+                return (WAIT, drone)
             best_move = self.get_next_tile_in_path(drone, client_index, my_state)
             return (MOVE, drone, best_move)
+
         if len(drone_packages) == 2:
             package1 = drone_packages[0]
             client1 = my_state[PACKAGES][package1][CLIENTS]
             client1_location = my_state[CLIENTS][client1][LOCATION]
+            client1_location = self.client_next_location(client1, my_state)
             client1_index = self.convert_tuple_to_index(client1_location)
             client1_distance = self.dist_matrix[drone_index][client1_index]
 
             package2 = drone_packages[1]
             client2 = my_state[PACKAGES][package2][CLIENTS]
             client2_location = my_state[CLIENTS][client2][LOCATION]
+            client2_location = self.client_next_location(client2, my_state)
             client2_index = self.convert_tuple_to_index(client2_location)
             client2_distance = self.dist_matrix[drone_index][client2_index]
 
             if client1_distance < client2_distance:
                 best_move = self.get_next_tile_in_path(drone, client1_index, my_state)
+                if client1_location == drone_location:
+                    return (WAIT, drone)
             else:
+                if client2_location == drone_location:
+                    return (WAIT, drone)
                 best_move = self.get_next_tile_in_path(drone, client2_index, my_state)
             return (MOVE, drone, best_move)
 
